@@ -49,7 +49,7 @@ if "Time Series (Daily)" in data:
 @app.get("/preverproximodia")
 def prever_proximo_dia():
     # Prever o próximo fechamento
-    latest_data = df.iloc[-1][['open', 'high', 'low', 'volume']].values.reshape(1, -1)
+    latest_data = df.iloc[0][['open', 'high', 'low', 'volume']].values.reshape(1, -1)
     predicted_close = model.predict(latest_data)
 
     return JSONResponse(content={"previsao": predicted_close[0]})
