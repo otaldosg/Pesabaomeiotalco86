@@ -4,100 +4,115 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
 from fastapi import FastAPI
 import joblib
-import requests
-import sqlite3
-from FastAPI import FileResponse
-from fastapi.responses import JSONResponse
 import json
-import os
+import requests
+import threading
+from datetime import datetime, timedelta
+from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
-# URL da API da Alpha Vantage
-ALPHA_VANTAGE_API_URL = "https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=PETZ3.SAO&apikey=LVMKCDGMGNGO2C99"
+# Função para buscar dados da API Alpha Vantage
+def buscar_dados():
+    api_key = "LVMKCDGMGNGO2C99"  # Sua chave de API
+    url = "https://www.alphavantage.co/query"
+    params = {
+        "function": "TIME_SERIES_DAILY",
+        "symbol": "PETZ3.SAO",
+        "apikey": api_key
+    }
+    response = requests.get(url, params=params)
+    data = response.json()
 
-# Função para buscar dados da API e atualizar o banco de dados
+    return data
+
+# Função para atualizar o arquivo dados.json
 def atualizar_dados():
-    response = requests.get(ALPHA_VANTAGE_API_URL)
-    if response.status_code == 200:
-        data = response.json()
+    data = buscar_dados()
+
+    # Salvar os dados no arquivo JSON
+    with open("dados.json", "w") as file:
+        json.dump(data, file)
+    
+    print(f"Dados atualizados em: {datetime.now()}")
+
+    # Após a atualização, refazer o modelo com os novos dados
+    processar_dados()
+
+# Função para processar os dados e treinar o modelo
+def processar_dados():
+    # Carregar os dados do arquivo JSON
+    with open("dados.json", "r") as file:
+        data = json.load(file)
+
+    # Verificar se os dados estão no formato correto
+    if "Time Series (Daily)" in data:
+        # Transformar os dados em um DataFrame
+        df = pd.DataFrame.from_dict(data["Time Series (Daily)"], orient='index')
+        df.columns = ['open', 'high', 'low', 'close', 'volume']
+        df = df.astype(float)
+        df.index = pd.to_datetime(df.index)  # Converte o índice para formato de data
+
+        # Criar variáveis independentes (X) e dependentes (y)
+        X = df[['open', 'high', 'low', 'volume']]
+        y = df['close']
+
+        # Dividir os dados em conjuntos de treinamento e teste
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+        # Criar e treinar o modelo
+        model = LinearRegression()
+        model.fit(X_train, y_train)
+
+        # Fazer previsões no conjunto de teste para avaliação
+        y_pred = model.predict(X_test)
+        mse = mean_squared_error(y_test, y_pred)
+        print(f'Mean Squared Error: {mse}')
+
+        # Salvar o modelo
+        model_save_path = "linear_regression_model.pkl"
+        joblib.dump(model, model_save_path)
+        print(f'Modelo salvo em: {model_save_path}')
+
+# Função que agenda a atualização a cada 4 horas
+def agendar_atualizacao():
+    while True:
+        now = datetime.now()
         
-        # Conectar ao banco de dados SQLite
-        conn = sqlite3.connect("dados.db")
-        cursor = conn.cursor()
+        # Definir os horários de atualização (00:00, 04:00, 08:00, 12:00, 16:00, 20:00, 22:00)
+        update_hours = [0, 4, 8, 12, 16, 20, 22]
 
-        # Criar a tabela, se não existir
-        cursor.execute('''CREATE TABLE IF NOT EXISTS time_series (
-                            date TEXT PRIMARY KEY,
-                            open REAL,
-                            high REAL,
-                            low REAL,
-                            close REAL,
-                            volume REAL)''')
+        # Encontrar o próximo horário de atualização
+        next_update_hour = min([hour for hour in update_hours if hour > now.hour], default=0)
 
-        # Limpar a tabela antes de inserir os dados novos
-        cursor.execute("DELETE FROM time_series")
+        # Se o próximo horário for 00:00 (início de um novo ciclo), ajustar para o próximo dia
+        if next_update_hour == 0:
+            next_update = now.replace(hour=next_update_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        else:
+            next_update = now.replace(hour=next_update_hour, minute=0, second=0, microsecond=0)
 
-        # Inserir os dados da API no banco de dados
-        for date, values in data["Time Series (Daily)"].items():
-            cursor.execute('''INSERT OR REPLACE INTO time_series (date, open, high, low, close, volume)
-                            VALUES (?, ?, ?, ?, ?, ?)''', 
-                            (date, 
-                             values['1. open'], 
-                             values['2. high'], 
-                             values['3. low'], 
-                             values['4. close'], 
-                             values['5. volume']))
+        # Calcular o tempo restante até o próximo horário de atualização
+        time_to_wait = (next_update - now).total_seconds()
+        print(f"A próxima atualização será às {next_update.strftime('%H:%M:%S')}")
 
-        conn.commit()
-        conn.close()
-    else:
-        print("Erro ao buscar dados da API.")
-
-# Carregar dados do banco de dados
-def carregar_dados():
-    conn = sqlite3.connect("dados.db")
-    df = pd.read_sql_query("SELECT * FROM time_series", conn)
-    df["date"] = pd.to_datetime(df["date"])
-    df.set_index("date", inplace=True)
-    conn.close()
-    return df
-
-# Atualizar os dados ao iniciar
-atualizar_dados()
-
-# Carregar os dados atualizados
-df = carregar_dados()
-
-# Criar variáveis independentes (X) e dependentes (y)
-X = df[['open', 'high', 'low', 'volume']]
-y = df['close']
-
-# Dividir os dados em conjuntos de treinamento e teste
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# Criar e treinar o modelo
-model = LinearRegression()
-model.fit(X_train, y_train)
-
-# Fazer previsões no conjunto de teste para avaliação
-y_pred = model.predict(X_test)
-mse = mean_squared_error(y_test, y_pred)
-print(f'Mean Squared Error: {mse}')
-
-# Salvar o modelo
-model_save_path = "linear_regression_model.pkl"
-joblib.dump(model, model_save_path)
-print(f'Modelo salvo em: {model_save_path}')
+        # Esperar até o próximo horário de atualização
+        threading.Timer(time_to_wait, atualizar_dados).start()
+        break
 
 # Endpoint para prever o fechamento do próximo dia
 @app.get("/preverproximodia")
 def prever_proximo_dia():
-    # Atualizar dados sempre que o endpoint for chamado
-    atualizar_dados()
+    # Carregar o modelo treinado
+    model = joblib.load("linear_regression_model.pkl")
 
-    # Carregar os dados atualizados
-    df = carregar_dados()
+    # Carregar os dados mais recentes
+    with open("dados.json", "r") as file:
+        data = json.load(file)
+
+    df = pd.DataFrame.from_dict(data["Time Series (Daily)"], orient='index')
+    df.columns = ['open', 'high', 'low', 'close', 'volume']
+    df = df.astype(float)
+    df.index = pd.to_datetime(df.index)  # Converte o índice para formato de data
 
     # Prever o próximo fechamento
     latest_data = df.iloc[0][['open', 'high', 'low', 'volume']].values.reshape(1, -1)
@@ -105,32 +120,23 @@ def prever_proximo_dia():
 
     return JSONResponse(content={"previsao": predicted_close[0]})
 
-@app.get("/dados")
-def baixar_dados():
-    try:
-        # Verificar se o arquivo do banco de dados existe
-        if not os.path.exists("dados.db"):
-            return JSONResponse(content={"erro": "Banco de dados não encontrado."}, status_code=404)
-
-        # Retornar o arquivo dados.db para o usuário
-        return FileResponse("dados.db", media_type='application/octet-stream', filename="dados.db")
-        
-    except Exception as e:
-        # Log do erro para debug
-        print(f"Erro ao acessar os dados do banco: {e}")
-        return JSONResponse(content={"erro": f"Erro ao acessar os dados do banco: {e}"}, status_code=500)
-        
 # Endpoint para escolher uma data específica para previsão
 @app.get("/preverpordata")
 def prever_por_data(data: str):
-    # Atualizar dados sempre que o endpoint for chamado
-    atualizar_dados()
-
-    # Carregar os dados atualizados
-    df = carregar_dados()
+    # Carregar o modelo treinado
+    model = joblib.load("linear_regression_model.pkl")
 
     try:
         selected_date = pd.to_datetime(data)
+
+        # Carregar os dados mais recentes
+        with open("dados.json", "r") as file:
+            data = json.load(file)
+
+        df = pd.DataFrame.from_dict(data["Time Series (Daily)"], orient='index')
+        df.columns = ['open', 'high', 'low', 'close', 'volume']
+        df = df.astype(float)
+        df.index = pd.to_datetime(df.index)  # Converte o índice para formato de data
 
         if selected_date in df.index:
             # Filtrar os dados até a data selecionada
@@ -158,7 +164,10 @@ def prever_por_data(data: str):
             else:
                 return JSONResponse(content={"erro": "Dados insuficientes para realizar a previsão."})
         else:
-            return JSONResponse(content={"erro": "Data não encontrada no banco de dados."})
+            return JSONResponse(content={"erro": "Data não encontrada no arquivo JSON."})
 
     except Exception as e:
         return JSONResponse(content={"erro": "Erro ao processar a data. Verifique o formato (YYYY-MM-DD) e tente novamente."})
+
+# Iniciar o agendamento de atualizações
+agendar_atualizacao()
