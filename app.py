@@ -105,14 +105,24 @@ def prever_proximo_dia():
 
 @app.get("/dados")
 def mostrar_dados():
-    # Carregar os dados atualizados
-    df = carregar_dados()
+    try:
+        # Carregar os dados atualizados
+        df = carregar_dados()
 
-    # Converter os dados em um formato JSON
-    data_json = df.reset_index().to_dict(orient='records')
+        # Verificar se o DataFrame está vazio
+        if df.empty:
+            return JSONResponse(content={"erro": "Não há dados no banco de dados."}, status_code=404)
 
-    return JSONResponse(content={"dados": data_json})
+        # Converter os dados em um formato JSON
+        data_json = df.reset_index().to_dict(orient='records')
 
+        return JSONResponse(content={"dados": data_json})
+
+    except Exception as e:
+        # Log do erro para debug
+        print(f"Erro ao carregar dados: {e}")
+        return JSONResponse(content={"erro": "Erro ao acessar os dados do banco."}, status_code=500)
+        
 # Endpoint para escolher uma data específica para previsão
 @app.get("/preverpordata")
 def prever_por_data(data: str):
