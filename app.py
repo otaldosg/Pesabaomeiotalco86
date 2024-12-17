@@ -6,8 +6,10 @@ from fastapi import FastAPI
 import joblib
 import requests
 import sqlite3
+from FastAPI import FileResponse
 from fastapi.responses import JSONResponse
 import json
+import os
 
 app = FastAPI()
 
@@ -104,24 +106,19 @@ def prever_proximo_dia():
     return JSONResponse(content={"previsao": predicted_close[0]})
 
 @app.get("/dados")
-def mostrar_dados():
+def baixar_dados():
     try:
-        # Carregar os dados atualizados
-        df = carregar_dados()
+        # Verificar se o arquivo do banco de dados existe
+        if not os.path.exists("dados.db"):
+            return JSONResponse(content={"erro": "Banco de dados não encontrado."}, status_code=404)
 
-        # Verificar se o DataFrame está vazio
-        if df.empty:
-            return JSONResponse(content={"erro": "Não há dados no banco de dados."}, status_code=404)
-
-        # Converter os dados em um formato JSON
-        data_json = df.reset_index().to_dict(orient='records')
-
-        return JSONResponse(content={"dados": data_json})
-
+        # Retornar o arquivo dados.db para o usuário
+        return FileResponse("dados.db", media_type='application/octet-stream', filename="dados.db")
+        
     except Exception as e:
         # Log do erro para debug
-        print(f"Erro ao carregar dados: {e}")
-        return JSONResponse(content={"erro": "Erro ao acessar os dados do banco."}, status_code=500)
+        print(f"Erro ao acessar os dados do banco: {e}")
+        return JSONResponse(content={"erro": f"Erro ao acessar os dados do banco: {e}"}, status_code=500)
         
 # Endpoint para escolher uma data específica para previsão
 @app.get("/preverpordata")
