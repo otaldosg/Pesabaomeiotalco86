@@ -2,11 +2,18 @@
     "Meta Data": {
         "1. Information": "Daily Prices (open, high, low, close) and Volumes",
         "2. Symbol": "PETZ3.SAO",
-        "3. Last Refreshed": "2024-12-16",
+        "3. Last Refreshed": "2024-12-17",
         "4. Output Size": "Compact",
         "5. Time Zone": "US/Eastern"
     },
     "Time Series (Daily)": {
+        "2024-12-17": {
+            "1. open": "3.8700",
+            "2. high": "3.9600",
+            "3. low": "3.7800",
+            "4. close": "3.9200",
+            "5. volume": "4236600"
+        },
         "2024-12-16": {
             "1. open": "3.9600",
             "2. high": "3.9900",
@@ -699,13 +706,6 @@
             "3. low": "3.5500",
             "4. close": "3.5500",
             "5. volume": "4123900"
-        },
-        "2024-07-26": {
-            "1. open": "3.6500",
-            "2. high": "3.8200",
-            "3. low": "3.6100",
-            "4. close": "3.7100",
-            "5. volume": "11461500"
         }
     }
-        }
+}
