@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-scikit-learn
+tensorflow
+numpy
 pandas
-joblib
-requests
+scikit-learn
