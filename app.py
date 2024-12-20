@@ -1,92 +1,89 @@
+import numpy as np
 import pandas as pd
-from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error
-from fastapi import FastAPI
-import joblib
 import json
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_squared_error
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
-# Carregar dados do JSON (supondo que o arquivo JSON esteja no mesmo diretório ou em um diretório específico)
-file_path = "dados.json"  # Substitua este caminho para o local do seu arquivo JSON
+# Caminho para o arquivo JSON
+file_path = "dados.json"
 
-# Carregar os dados do arquivo JSON
+# Carregar os dados do JSON
 with open(file_path, 'r') as file:
     data = json.load(file)
 
-# Verifique se os dados estão no formato correto
+# Verificar e transformar os dados
 if "Time Series (Daily)" in data:
-    # Transformar os dados em um DataFrame
-    df = pd.DataFrame.from_dict(data["Time Series (Daily)"], orient='index')
+    df = pd.DataFrame.from_dict(data["Time Series (Daily)"], orient="index")
     df.columns = ['open', 'high', 'low', 'close', 'volume']
     df = df.astype(float)
-    df.index = pd.to_datetime(df.index)  # Converte o índice para formato de data
+    df.index = pd.to_datetime(df.index)
+    df = df.sort_index()  # Ordenar por data
 
-    # Criar variáveis independentes (X) e dependentes (y)
-    X = df[['open', 'high', 'low', 'volume']]
-    y = df['close']
+    # Normalizar os dados
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_data = scaler.fit_transform(df[['close']])
 
-    # Dividir os dados em conjuntos de treinamento e teste
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # Criar sequências de dados para LSTM
+    def create_sequences(data, seq_length):
+        X, y = [], []
+        for i in range(len(data) - seq_length):
+            X.append(data[i:i + seq_length, 0])
+            y.append(data[i + seq_length, 0])
+        return np.array(X), np.array(y)
 
-    # Criar e treinar o modelo
-    model = LinearRegression()
-    model.fit(X_train, y_train)
+    seq_length = 30  # Número de dias usados para previsão
+    X, y = create_sequences(scaled_data, seq_length)
 
-    # Fazer previsões no conjunto de teste para avaliação
+    # Dividir os dados em treino e teste
+    train_size = int(len(X) * 0.8)
+    X_train, X_test = X[:train_size], X[train_size:]
+    y_train, y_test = y[:train_size], y[train_size:]
+
+    # Redimensionar para o formato LSTM
+    X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
+    X_test = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
+
+    # Criar o modelo LSTM
+    model = Sequential()
+    model.add(LSTM(50, return_sequences=True, input_shape=(seq_length, 1)))
+    model.add(LSTM(50))
+    model.add(Dense(1))
+
+    # Compilar o modelo
+    model.compile(optimizer='adam', loss='mse')
+
+    # Treinar o modelo
+    model.fit(X_train, y_train, epochs=20, batch_size=32, validation_data=(X_test, y_test))
+
+    # Avaliar o modelo
     y_pred = model.predict(X_test)
     mse = mean_squared_error(y_test, y_pred)
-    print(f'Mean Squared Error: {mse}')
-
-    # Salvar o modelo
-    model_save_path = "linear_regression_model.pkl"
-    joblib.dump(model, model_save_path)
-    print(f'Modelo salvo em: {model_save_path}')
+    print(f"Mean Squared Error (LSTM): {mse}")
 
 # Endpoint para prever o fechamento do próximo dia
 @app.get("/preverproximodia")
 def prever_proximo_dia():
-    # Prever o próximo fechamento
-    latest_data = df.iloc[0][['open', 'high', 'low', 'volume']].values.reshape(1, -1)
-    predicted_close = model.predict(latest_data)
-
-    return JSONResponse(content={"previsao": predicted_close[0]})
-
-# Endpoint para escolher uma data específica para previsão
-@app.get("/preverpordata")
-def prever_por_data(data: str):
     try:
-        selected_date = pd.to_datetime(data)
+        # Selecionar os últimos 30 dias para previsão
+        last_sequence = scaled_data[-seq_length:].reshape((1, seq_length, 1))
 
-        if selected_date in df.index:
-            # Filtrar os dados até a data selecionada
-            filtered_df = df[df.index < selected_date]
+        # Fazer previsão
+        forecast = model.predict(last_sequence)
 
-            # Verificar se há dados suficientes
-            if len(filtered_df) > 1:
-                X_filtered = filtered_df[['open', 'high', 'low', 'volume']]
-                y_filtered = filtered_df['close']
+        # Reverter a escala para o valor original
+        forecast = scaler.inverse_transform(forecast)
 
-                # Treinar o modelo com os dados até a data selecionada
-                model.fit(X_filtered, y_filtered)
-
-                # Prever o fechamento para a data escolhida
-                selected_day_data = df.loc[selected_date][['open', 'high', 'low', 'volume']].values.reshape(1, -1)
-                predicted_close = model.predict(selected_day_data)
-
-                # Valor real
-                actual_close = df.loc[selected_date]['close']
-
-                return JSONResponse(content={
-                    "previsao": predicted_close[0],
-                    "valor_real": actual_close
-                })
-            else:
-                return JSONResponse(content={"erro": "Dados insuficientes para realizar a previsão."})
-        else:
-            return JSONResponse(content={"erro": "Data não encontrada no arquivo JSON."})
-
+        return JSONResponse(content={"previsao": forecast[0][0]})
     except Exception as e:
-        return JSONResponse(content={"erro": "Erro ao processar a data. Verifique o formato (YYYY-MM-DD) e tente novamente."})
+        return JSONResponse(content={"erro": str(e)})
+
+# Endpoint para obter MSE
+@app.get("/mse")
+def get_mse():
+    return JSONResponse(content={"mean_squared_error": mse})
