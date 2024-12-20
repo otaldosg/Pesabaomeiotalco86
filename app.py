@@ -69,20 +69,18 @@ if "Time Series (Daily)" in data:
 # Endpoint para prever o fechamento do próximo dia
 @app.get("/preverproximodia")
 def prever_proximo_dia():
-    try:
-        # Selecionar os últimos 30 dias para previsão
-        last_sequence = scaled_data[-seq_length:].reshape((1, seq_length, 1))
+    # Obter os últimos dados para previsão
+    latest_data = df.iloc[-SEQUENCE_LENGTH:][['open', 'high', 'low', 'volume']].values
+    latest_data_scaled = scaler.transform(latest_data)
+    latest_data_reshaped = latest_data_scaled.reshape(1, SEQUENCE_LENGTH, latest_data_scaled.shape[1])
 
-        # Fazer previsão
-        forecast = model.predict(last_sequence)
+    # Fazer a previsão
+    predicted_close = model.predict(latest_data_reshaped)
+    predicted_close = predicted_close[0][0]  # Obter o valor da previsão
+    predicted_close = float(predicted_close)  # Converter para float padrão
 
-        # Reverter a escala para o valor original
-        forecast = scaler.inverse_transform(forecast)
-
-        return JSONResponse(content={"previsao": forecast[0][0]})
-    except Exception as e:
-        return JSONResponse(content={"erro": str(e)})
-
+    return JSONResponse(content={"previsao": predicted_close})
+    
 # Endpoint para obter MSE
 @app.get("/mse")
 def get_mse():
